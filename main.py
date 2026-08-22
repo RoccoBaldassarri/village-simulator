@@ -1,6 +1,5 @@
 import os
 import json
-import sys
 import pygame
 
 #load the map from the json
