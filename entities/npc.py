@@ -1,82 +1,62 @@
 import random
 from enum import Enum, auto
 
+from core.pathfinding import bfs_path
+from entities.inventory import Inventory
+
 
 class NPCState(Enum):
-    """Stati della FSM. Punto di estensione per il futuro (es. SEEKING_FOOD)."""
     IDLE = auto()
     MOVING = auto()
 
 
 class NPC:
-    """
-    Un singolo abitante del villaggio.
-
-    Possiede DUE sistemi di coordinate:
-      - col/row: posizione LOGICA sulla griglia (usata per collisioni e pathfinding).
-      - x/y:     posizione FLUIDA in pixel (usata per il rendering e l'interpolazione
-                 di movimento a 60 FPS, così lo spostamento tra due tile appare
-                 uno scorrimento morbido e non un "teletrasporto").
-
-    Comunicazione:
-      - L'NPC NON conosce MapManager, PhysicsManager o NPCManager. Parla
-        esclusivamente con l'oggetto `world` (la facade WorldManager) che
-        gli viene passato in update(). Questo mantiene l'NPC completamente
-        disaccoppiato dai dettagli implementativi del mondo.
-    """
+    INVENTORY_PRINT_INTERVAL_SECONDS = 2.0
+    ASSUMED_FPS = 60
 
     def __init__(self, npc_id: int, col: int, row: int, tile_size: int, texture, speed: float = 3.0):
         self.id = npc_id
         self.tile_size = tile_size
         self.texture = texture
-        self.speed = speed  # pixel per frame durante l'interpolazione
-
-        # Posizione logica (griglia)
+        self.speed = speed
         self.col = col
         self.row = row
 
-        # Posizione fluida (pixel) — parte allineata alla cella di spawn
         self.x = float(col * tile_size)
         self.y = float(row * tile_size)
 
-        # Pixel target della cella verso cui l'NPC si sta muovendo in questo istante
         self.target_x = self.x
         self.target_y = self.y
 
-        # Stato FSM
         self.state = NPCState.IDLE
 
-        # Statistiche interne che guidano il comportamento
         self.stats = {
             "hunger": random.uniform(0, 20),
             "boredom": random.uniform(0, 20),
         }
 
-        # Coda di passi (col, row) ancora da percorrere per raggiungere una destinazione
         self.path = []
-
-    # ------------------------------------------------------------------ #
-    # Ciclo di vita per frame (chiamato da NPCManager)
-    # ------------------------------------------------------------------ #
+        self.inventory = Inventory()
+        self.pending_item_target = None
+        self._inventory_print_timer = 0.0
 
     def update(self, dt: float, world):
         self._update_stats(dt)
+        self._update_inventory_debug_timer(dt)
         self._run_fsm(world)
 
     def draw(self, surface):
         surface.blit(self.texture, (self.x, self.y))
 
-    # ------------------------------------------------------------------ #
-    # Statistiche
-    # ------------------------------------------------------------------ #
-
     def _update_stats(self, dt: float):
         self.stats["hunger"] += 0.05 * dt
         self.stats["boredom"] += 0.08 * dt
 
-    # ------------------------------------------------------------------ #
-    # Finite State Machine
-    # ------------------------------------------------------------------ #
+    def _update_inventory_debug_timer(self, dt: float):
+        self._inventory_print_timer += dt / self.ASSUMED_FPS
+        if self._inventory_print_timer >= self.INVENTORY_PRINT_INTERVAL_SECONDS:
+            self._inventory_print_timer -= self.INVENTORY_PRINT_INTERVAL_SECONDS
+            print(f"[NPC {self.id}] inventory -> {self.inventory}")
 
     def _run_fsm(self, world):
         if self.state == NPCState.IDLE:
@@ -85,54 +65,55 @@ class NPC:
             self._handle_moving(world)
 
     def _handle_idle(self, world):
-        """
-        MVP: se la noia supera una soglia, l'NPC decide di vagare verso una
-        cella casuale. In futuro questa è la funzione da espandere per far
-        scegliere all'NPC comportamenti diversi in base alle statistiche
-        (es. hunger alto -> cerca un oggetto "cibo" interagibile).
-        """
+        target_item = world.get_nearest_item(self.col, self.row)
+        if target_item is not None:
+            path = self._compute_path_to((target_item.col, target_item.row), world)
+            if path:
+                self.path = path
+                self.pending_item_target = target_item
+                self.state = NPCState.MOVING
+            return
+        
         if self.stats["boredom"] < 40:
             return
 
         destination = self._pick_random_destination(world)
-        path = self._compute_naive_path(destination)
-
+        path = self._compute_path_to(destination, world)
         if path:
             self.path = path
+            self.pending_item_target = None
             self.state = NPCState.MOVING
             self.stats["boredom"] = 0
 
     def _handle_moving(self, world):
-        # Se la posizione in pixel ha raggiunto il target della cella corrente,
-        # bisogna decidere il prossimo passo (o tornare IDLE se il path è finito).
         if self.x == self.target_x and self.y == self.target_y:
             if not self.path:
-                self.state = NPCState.IDLE
+                self._on_path_completed(world)
                 return
 
             next_col, next_row = self.path[0]
 
-            # Requisito chiave: PRIMA di impegnarsi a muoversi verso la prossima
-            # cella, si richiede sempre conferma al mondo (PhysicsManager tramite
-            # la facade). Questo copre il caso in cui, nel frattempo, un altro
-            # NPC abbia occupato quella cella.
             if world.can_move_to(next_col, next_row, mover=self):
                 self.path.pop(0)
                 self.col, self.row = next_col, next_row
                 self.target_x = float(next_col * self.tile_size)
                 self.target_y = float(next_row * self.tile_size)
             else:
-                # Passo bloccato: per l'MVP l'NPC abbandona il percorso e torna
-                # IDLE. In futuro qui si può ricalcolare un path alternativo.
                 self.path = []
+                self.pending_item_target = None
                 self.state = NPCState.IDLE
                 return
 
         self._step_towards_target()
 
-    # ------------------------------------------------------------------ #
-    # Movimento pixel-per-pixel (interpolazione)
-    # ------------------------------------------------------------------ #
+    def _on_path_completed(self, world):
+        if self.pending_item_target is not None:
+            still_there = world.get_item_at(self.col, self.row)
+            if still_there is self.pending_item_target:
+                world.collect_item(still_there)
+                self.inventory.add_item(still_there)
+            self.pending_item_target = None
+        self.state = NPCState.IDLE
 
     def _step_towards_target(self):
         self.x = self._move_axis(self.x, self.target_x)
@@ -146,32 +127,16 @@ class NPC:
             return target
         return current + step
 
-    # ------------------------------------------------------------------ #
-    # Pathfinding (placeholder MVP)
-    # ------------------------------------------------------------------ #
-
     def _pick_random_destination(self, world) -> tuple:
         cols, rows = world.get_map_dimensions()
         return random.randint(0, cols - 1), random.randint(0, rows - 1)
 
-    def _compute_naive_path(self, destination: tuple) -> list:
-        """
-        Path "ingenuo": una linea a gradini in stile Manhattan, senza
-        evitamento ostacoli. Basta sostituire il corpo di questo metodo con
-        un vero algoritmo (es. A*) per fare l'upgrade: il resto della FSM
-        (_handle_moving) non deve cambiare, perché continua a consumare
-        `self.path` un passo alla volta con la stessa interfaccia.
-        """
-        path = []
-        col, row = self.col, self.row
-        dest_col, dest_row = destination
-
-        while col != dest_col:
-            col += 1 if dest_col > col else -1
-            path.append((col, row))
-
-        while row != dest_row:
-            row += 1 if dest_row > row else -1
-            path.append((col, row))
-
-        return path
+    def _compute_path_to(self, destination: tuple, world) -> list:
+        cols, rows = world.get_map_dimensions()
+        return bfs_path(
+            start=(self.col, self.row),
+            goal=destination,
+            is_walkable=world.is_static_walkable,
+            cols=cols,
+            rows=rows,
+        )
