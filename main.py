@@ -1,61 +1,46 @@
-import os
 import pygame
 
-from managers.world_manager import WorldManager
+from core.config import SCREEN_WIDTH, SCREEN_HEIGHT, FPS, MAP_PATH
+from core.game_state import GameState
+from managers.display_manager import DisplayManager
+from ui.main_menu import MainMenu
+from ui.map_editor import MapEditor
+from ui.gameplay_scene import GameplayScene
 
-SCREEN_WIDTH = 1280
-SCREEN_HEIGHT = 720
-FPS = 60
 
-MAP_PATH = os.path.join("assets", "map", "test_map.json")
-TILE_TEXTURES = {
-    "grass": os.path.join("assets", "images", "grass1.png"),
-    "dirt": os.path.join("assets", "images", "dirt.png"),
-}
-NPC_TEXTURE_PATH = os.path.join("assets", "images", "npc_test.png")
+def create_scene(state: GameState, display: DisplayManager):
+    if state == GameState.MENU:
+        return MainMenu(display)
+    if state == GameState.MAP_EDITOR:
+        return MapEditor(display, MAP_PATH)
+    if state == GameState.SIMULATION:
+        return GameplayScene(display)
+    raise ValueError(f"Stato di gioco sconosciuto: {state}")
 
 
 def main():
-    """
-    Il Direttore d'Orchestra.
+    display = DisplayManager(SCREEN_WIDTH, SCREEN_HEIGHT, "Village Simulator")
 
-    Contiene SOLO: inizializzazione di pygame, creazione della facade
-    WorldManager, game loop a 60 FPS, gestione eventi, e la sequenza
-    update()/draw(). Nessuna logica di mappa, fisica o NPC vive qui.
-    """
-    pygame.init()
-    #screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
-    pygame.display.set_caption("Village Simulator - MVP")
-    clock = pygame.time.Clock()
-
-    # --- Inizializzazione: un'unica facade costruisce tutto il mondo ---
-    try:
-        worldManager = WorldManager(MAP_PATH, TILE_TEXTURES, NPC_TEXTURE_PATH)
-    except RuntimeError as e:
-        print(f"Errore fatale durante la costruzione del mondo: {e}")
-        pygame.quit()
-        return
-
-    # NPC di prova per validare end-to-end la pipeline spawn -> FSM -> collisioni -> draw
-    worldManager.spawn_npc(col=2, row=0)
-    worldManager.spawn_npc(col=5, row=3)
+    current_state = GameState.MENU
+    scene = create_scene(current_state, display)
 
     running = True
     while running:
-        # dt normalizzato: 1.0 = un frame a 60 FPS, così self.speed nell'NPC
-        # resta indipendente dal framerate reale.
-        dt = clock.tick(FPS) / 1000.0 * FPS
+        dt = display.tick(FPS)
 
         for event in pygame.event.get():
-            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+            if event.type == pygame.QUIT:
                 running = False
+            else:
+                scene.handle_event(event)
 
-        worldManager.update(dt)
+        scene.update(dt)
+        scene.draw()
+        display.flip()
 
-        screen.fill((0, 0, 0))
-        worldManager.draw(screen)
-        pygame.display.flip()
+        if scene.next_state is not None and scene.next_state != current_state:
+            current_state = scene.next_state
+            scene = create_scene(current_state, display)
 
     pygame.quit()
 
