@@ -1,78 +1,64 @@
 import os
-import json
 import pygame
 
-#load the map from the json
-with open("assets/map/test_map.json", "r") as file:
-    map_data = json.load(file)
-
-TILE_SIZE = map_data["tile_size"]
-GRID_COLS = map_data["cols"]
-GRID_ROWS = map_data["rows"]
-grid = map_data["grid"]
+from managers.world_manager import WorldManager
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
+FPS = 60
 
-# npc initial position 
-npc_col = 2
-npc_row = 0
-npc_x = npc_col * TILE_SIZE
-npc_y = npc_row * TILE_SIZE
+MAP_PATH = os.path.join("assets", "map", "test_map.json")
+TILE_TEXTURES = {
+    "grass": os.path.join("assets", "images", "grass1.png"),
+    "dirt": os.path.join("assets", "images", "dirt.png"),
+}
+NPC_TEXTURE_PATH = os.path.join("assets", "images", "npc_test.png")
 
-def render_full_map(grid_data, textures, map_surface):
-        for row_idx, row in enumerate(grid_data):
-            for col_idx, tile in enumerate(row):
-                texture = textures[tile["type"]]
-                map_surface.blit(texture, (col_idx * TILE_SIZE, row_idx * TILE_SIZE))
 
 def main():
-    pygame.init()
+    """
+    Il Direttore d'Orchestra.
 
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Village Simulator - Tilemap")
+    Contiene SOLO: inizializzazione di pygame, creazione della facade
+    WorldManager, game loop a 60 FPS, gestione eventi, e la sequenza
+    update()/draw(). Nessuna logica di mappa, fisica o NPC vive qui.
+    """
+    pygame.init()
+    #screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
+    pygame.display.set_caption("Village Simulator - MVP")
     clock = pygame.time.Clock()
 
-    grass_path = os.path.join("assets", "images", "grass1.png")
-    dirt_path = os.path.join("assets", "images", "dirt.png")
-    npc_path = os.path.join("assets", "images", "npc_test.png")
-
+    # --- Inizializzazione: un'unica facade costruisce tutto il mondo ---
     try:
-        textures = {
-            "grass": pygame.transform.scale(
-                pygame.image.load(grass_path).convert_alpha(), (TILE_SIZE, TILE_SIZE)
-            ),
-            "dirt": pygame.transform.scale(
-                pygame.image.load(dirt_path).convert_alpha(), (TILE_SIZE, TILE_SIZE)
-            )
-        }
-        
-        npc_image = pygame.transform.scale(
-        pygame.image.load(npc_path).convert_alpha(), (TILE_SIZE, TILE_SIZE)
-        )
-        
-    except pygame.error as e:
-        print(f"Error: {e}")
+        worldManager = WorldManager(MAP_PATH, TILE_TEXTURES, NPC_TEXTURE_PATH)
+    except RuntimeError as e:
+        print(f"Errore fatale durante la costruzione del mondo: {e}")
         pygame.quit()
-        exit()
+        return
 
-    # pre renderd background
-    map_surface = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
-    render_full_map(grid, textures, map_surface)
+    # NPC di prova per validare end-to-end la pipeline spawn -> FSM -> collisioni -> draw
+    worldManager.spawn_npc(col=2, row=0)
+    worldManager.spawn_npc(col=5, row=3)
 
-    #game loop
     running = True
     while running:
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-        #draws the pre rendered map and then draws the npc
-        screen.blit(map_surface, (0, 0))
-        screen.blit(npc_image, (npc_x, npc_y))
+        # dt normalizzato: 1.0 = un frame a 60 FPS, così self.speed nell'NPC
+        # resta indipendente dal framerate reale.
+        dt = clock.tick(FPS) / 1000.0 * FPS
 
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
+                running = False
+
+        worldManager.update(dt)
+
+        screen.fill((0, 0, 0))
+        worldManager.draw(screen)
         pygame.display.flip()
-        clock.tick(60)
+
     pygame.quit()
+
 
 if __name__ == "__main__":
     main()
