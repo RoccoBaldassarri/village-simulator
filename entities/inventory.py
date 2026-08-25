@@ -10,5 +10,5 @@ class Inventory:
 
     def __str__(self) -> str:
         if not self.items:
-            return "vuoto"
+            return "empty"
         return ", ".join(f"{name} x{qty}" for name, qty in self.items.items())

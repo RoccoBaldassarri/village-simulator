@@ -56,7 +56,7 @@ class NPC:
         self._inventory_print_timer += dt / self.ASSUMED_FPS
         if self._inventory_print_timer >= self.INVENTORY_PRINT_INTERVAL_SECONDS:
             self._inventory_print_timer -= self.INVENTORY_PRINT_INTERVAL_SECONDS
-            print(f"[NPC {self.id}] Inventario -> {self.inventory}")
+            print(f"[NPC {self.id}] inventory -> {self.inventory}")
 
     def _run_fsm(self, world):
         if self.state == NPCState.IDLE:
