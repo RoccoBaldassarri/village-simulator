@@ -27,6 +27,7 @@ class GameplayScene:
         self.display.clear((0, 0, 0))
         self.world.draw(self.display.get_screen())
         self.display.draw_text(
+            "ESC to return to main menu",
             (10, 10),
             font=self.display.font_small,
         )
